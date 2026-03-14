@@ -34,7 +34,7 @@ export function Header({ version = VERSION }) {
   // Get active navigation from data attribute on header container
   const headerContainer = document.getElementById('header-container');
   const activeNav = headerContainer?.dataset?.activeNav || '';
-  const [username, setUsername] = useState('');
+  const [username, _setUsername] = useState(localStorage.getItem('username') || '');
   const [currentUser, setCurrentUser] = useState(null);
   const [profileFormData, setProfileFormData] = useState(() => buildProfileFormData());
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
@@ -42,8 +42,18 @@ export function Header({ version = VERSION }) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [authEnabled, setAuthEnabled] = useState(true); // Default to true while loading
   const [demoMode, setDemoMode] = useState(false); // Demo mode state
-  const [userRole, setUserRole] = useState(null); // null = still loading
+  const [userRole, _setUserRole] = useState(localStorage.getItem('userrole') || null); // null = still loading
   const { t, locale, localePreference, setLocalePreference, availableLocales, AUTO_LOCALE } = useI18n();
+
+  const setUsername = (username) => {
+    _setUsername(username);
+    localStorage.setItem('username', username);
+  };
+
+  const setUserRole = (userrole) => {
+    _setUserRole(userrole);
+    localStorage.setItem('userrole', userrole);
+  };
 
   const syncSessionState = useCallback((session) => {
     if (session.valid && session.role) {
