@@ -5,6 +5,7 @@
 import { useState, useEffect, useCallback, useRef } from 'preact/hooks';
 import { tinykeys } from 'tinykeys';
 
+
 /**
  * Navigate to an adjacent stream in the native fullscreen grid.
  * Finds the currently fullscreen .video-cell, locates its grid position, then
@@ -80,20 +81,30 @@ export function useFullscreenGridNav(streamsToShow, cols, rows) {
   useEffect(() => { rowsRef.current = rows; },            [rows]);
 
   useEffect(() => {
-    const guard = (dir) => (e) => {
-      if (!document.fullscreenElement) return;
+    // Use a capture-phase listener instead of tinykeys so the handler runs
+    // before the browser's native fullscreen-controls overlay can mark the
+    // event as defaultPrevented (tinykeys v3 skips events that are already
+    // defaultPrevented, which caused arrow keys to be silently ignored).
+    const handler = (e) => {
+      if (!document.fullscreenElement) return; // only act when a cell is in native fullscreen
+      if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+
+      let direction;
+      switch (e.key) {
+        case 'ArrowLeft':  direction = 'ArrowLeft';  break;
+        case 'ArrowRight': direction = 'ArrowRight'; break;
+        case 'ArrowUp':    direction = 'ArrowUp';    break;
+        case 'ArrowDown':  direction = 'ArrowDown';  break;
+        default: return;
+      }
+
+      // Prevent the browser from scrolling the page or seeking the video.
       e.preventDefault();
-      navigateFullscreenGrid(dir, streamsRef.current, colsRef.current, rowsRef.current);
+      navigateFullscreenGrid(direction, streamsRef.current, colsRef.current, rowsRef.current);
     };
 
-    const unsub = tinykeys(window, {
-      ArrowLeft:  guard('ArrowLeft'),
-      ArrowRight: guard('ArrowRight'),
-      ArrowUp:    guard('ArrowUp'),
-      ArrowDown:  guard('ArrowDown'),
-    });
-
-    return unsub; // tinykeys returns the cleanup function directly
+    window.addEventListener('keydown', handler, { capture: true });
+    return () => window.removeEventListener('keydown', handler, { capture: true });
   }, []); // empty deps: refs keep values current
 }
 

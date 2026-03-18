@@ -737,7 +737,7 @@ export function MSEVideoCell({
           {/* Fullscreen button */}
           <button
             className="fullscreen-btn"
-            onClick={() => onToggleFullscreen(stream.name)}
+            onClick={(e) => onToggleFullscreen(stream.name, e, cellRef.current)}
             style={{
               padding: '8px 12px',
               backgroundColor: 'rgba(0, 0, 0, 0.7)',

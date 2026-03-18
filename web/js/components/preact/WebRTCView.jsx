@@ -6,7 +6,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'preact/hooks';
 // Note: useCallback is still used by getStreamsToShow
 import { showStatusMessage } from './ToastContainer.jsx';
-import { useFullscreenManager, FullscreenManager } from './FullscreenManager.jsx';
+import { useFullscreenManager, FullscreenManager, useFullscreenGridNav } from './FullscreenManager.jsx';
 import { useQuery, useQueryClient } from '../../query-client.js';
 import { WebRTCVideoCell } from './WebRTCVideoCell.jsx';
 import { SnapshotManager, useSnapshotManager } from './SnapshotManager.jsx';
@@ -464,6 +464,9 @@ export function WebRTCView() {
   // Memoize the streams to show to prevent unnecessary re-renders
   // Note: getMaxStreamsForLayout is omitted from dependencies because it's memoized from `layout`.
   const streamsToShow = useMemo(() => getStreamsToShow(), [getStreamsToShow]);
+
+  // Arrow-key navigation between streams while one is in native fullscreen.
+  useFullscreenGridNav(streamsToShow, cols, rows);
 
   return (
     <section
