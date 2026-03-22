@@ -123,6 +123,7 @@
   "system.unhealthy": "異常",
   "system.version": "バージョン",
   "system.uptime": "稼働時間",
+  "system.viewRecordingsForStream": "ストリームの録画を表示: {stream}",
   "zoneEditor.title": "検出ゾーンエディター",
   "zoneEditor.subtitle": "{streamName} の物体検出用ゾーンを描画します",
   "zoneEditor.drawZone": "ゾーンを描画",

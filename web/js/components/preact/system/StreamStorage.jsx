@@ -75,13 +75,15 @@ export function StreamStorage({ systemInfo, formatBytes }) {
               {streamStorageData.map((stream, index) => {
                 const color = getStreamColor(index);
                 return (
-                  <span
+                  <a
                     key={stream.name}
-                    className="inline-block px-2 py-0.5 text-xs rounded"
+                    href={`recordings.html?stream=${encodeURIComponent(stream.name)}`}
+                    className="inline-block px-2 py-0.5 text-xs rounded hover:opacity-80 transition-opacity cursor-pointer"
                     style={{ backgroundColor: color.bg, color: color.text }}
+                    title={t('system.viewRecordingsForStream', { stream: stream.name })}
                   >
                     {stream.name}: {formatBytes(stream.size)}
-                  </span>
+                  </a>
                 );
               })}
             </div>
@@ -97,11 +99,13 @@ export function StreamStorage({ systemInfo, formatBytes }) {
               {streamStorageData.map((stream, index) => {
                 const color = getStreamColor(index);
                 return (
-                  <div
+                  <a
                     key={stream.name}
-                    className="h-2.5"
+                    href={`recordings.html?stream=${encodeURIComponent(stream.name)}`}
+                    className="h-2.5 block hover:opacity-70 transition-opacity cursor-pointer"
                     style={{ width: `${stream.slicePercent}%`, backgroundColor: color.text }}
-                  ></div>
+                    title={t('system.viewRecordingsForStream', { stream: stream.name })}
+                  ></a>
                 );
               })}
             </div>

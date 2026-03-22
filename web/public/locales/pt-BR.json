@@ -446,6 +446,7 @@
   "system.noQuota": "sem cota",
   "system.streamStorageRecordingsSummary": "{size} ({percent}%) • {count} gravações",
   "system.retentionAndQuota": "Retenção: {retention} • {quota}",
+  "system.viewRecordingsForStream": "Ver gravações do stream: {stream}",
   "system.storageHealth": "Saúde do armazenamento",
   "system.storageHealthUnavailable": "Dados de saúde do armazenamento indisponíveis",
   "system.diskPressure": "Pressão do disco",

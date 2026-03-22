@@ -123,6 +123,7 @@
   "system.unhealthy": "Non opérationnel",
   "system.version": "Version",
   "system.uptime": "Temps de fonctionnement",
+  "system.viewRecordingsForStream": "Voir les enregistrements du stream : {stream}",
   "zoneEditor.title": "Éditeur de zones de détection",
   "zoneEditor.subtitle": "Dessinez les zones où vous souhaitez détecter des objets pour {streamName}",
   "zoneEditor.drawZone": "Dessiner une zone",

@@ -123,6 +123,7 @@
   "system.unhealthy": "Nicht betriebsbereit",
   "system.version": "Version",
   "system.uptime": "Laufzeit",
+  "system.viewRecordingsForStream": "Aufnahmen für Stream anzeigen: {stream}",
   "zoneEditor.title": "Erkennungszonen-Editor",
   "zoneEditor.subtitle": "Zeichnen Sie Zonen, in denen Objekte für {streamName} erkannt werden sollen",
   "zoneEditor.drawZone": "Zone zeichnen",

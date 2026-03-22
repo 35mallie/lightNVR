@@ -123,6 +123,7 @@
   "system.unhealthy": "异常",
   "system.version": "版本",
   "system.uptime": "运行时间",
+  "system.viewRecordingsForStream": "查看流的录像: {stream}",
   "zoneEditor.title": "检测区域编辑器",
   "zoneEditor.subtitle": "为 {streamName} 绘制需要检测物体的区域",
   "zoneEditor.drawZone": "绘制区域",
