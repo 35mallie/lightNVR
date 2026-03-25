@@ -21,9 +21,9 @@ export function TimelineSegments({ segments: propSegments }) {
   const [endHour, setEndHour] = useState(24);
   const currentSegmentIndexRef = useRef(-1);
 
-  // Update segments when props change
+  // Update segments when props change (including when cleared to empty on deletion)
   useEffect(() => {
-    if (propSegments && propSegments.length > 0) {
+    if (Array.isArray(propSegments)) {
       setSegments(propSegments);
     }
   }, [propSegments]);
