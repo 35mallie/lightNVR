@@ -1,4 +1,5 @@
 #include "video/onvif_device_management.h"
+#include "video/onvif_soap.h"
 #include "video/stream_manager.h"
 #include "core/logger.h"
 #include "database/db_streams.h"
@@ -7,11 +8,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-#include <sys/random.h>
 #include <curl/curl.h>
 #include "ezxml.h"
-#include <mbedtls/sha1.h>
-#include <mbedtls/base64.h>
 #include <libavformat/avformat.h>
 #include "core/url_utils.h"
 
@@ -40,87 +38,6 @@ static size_t write_callback(void *contents, size_t size, size_t nmemb, void *us
     return realsize;
 }
 
-// Create WS-Security header with digest authentication
-static char* create_security_header(const char *username, const char *password, char *nonce, char *created) {
-    char *header = NULL;
-    unsigned char digest[20]; // SHA1 digest length is 20 bytes
-    char *concatenated = NULL;
-    char *base64_nonce = NULL;
-    char *base64_digest = NULL;
-    int nonce_len = 16;
-    size_t base64_len;
-    
-    // Generate cryptographically secure random nonce
-    unsigned char nonce_bytes[nonce_len];
-    if (getrandom(nonce_bytes, nonce_len, 0) < 0) {
-        // Fallback to /dev/urandom if getrandom fails
-        FILE *urandom = fopen("/dev/urandom", "rb");
-        if (urandom) {
-            (void)fread(nonce_bytes, 1, nonce_len, urandom);
-            fclose(urandom);
-        }
-    }
-    
-    // Base64 encode the nonce
-    base64_nonce = malloc(((4 * nonce_len) / 3) + 5); // +5 for padding and null terminator
-    mbedtls_base64_encode((unsigned char*)base64_nonce, ((4 * nonce_len) / 3) + 5, &base64_len, nonce_bytes, nonce_len);
-    base64_nonce[base64_len] = '\0'; // Ensure null termination
-    
-    // Copy nonce to output parameter (base64_len is the actual encoded length without null terminator)
-    memcpy(nonce, base64_nonce, base64_len + 1);
-    
-    // Get current time
-    time_t now;
-    struct tm tm_now_buf;
-    const struct tm *tm_now;
-
-    time(&now);
-    tm_now = gmtime_r(&now, &tm_now_buf);
-    strftime(created, 30, "%Y-%m-%dT%H:%M:%S.000Z", tm_now);
-    
-    // Create the concatenated string: nonce + created + password
-    // For digest calculation, we need to use the raw nonce bytes, not the base64 encoded version.
-    // Pre-compute lengths to avoid the bugprone-not-null-terminated-result lint pattern.
-    size_t created_len = strlen(created);
-    size_t password_len = strlen(password);
-    concatenated = malloc(nonce_len + created_len + password_len + 1);
-    memcpy(concatenated, nonce_bytes, nonce_len);
-    // Raw byte copies for SHA-1 input: intermediate parts are not C strings
-    memcpy((void *)(concatenated + nonce_len), created, created_len); // NOLINT(bugprone-not-null-terminated-result)
-    // Exclude the null terminator: WS-Security spec requires raw bytes only
-    memcpy((void *)(concatenated + nonce_len + created_len), password, password_len); // NOLINT(bugprone-not-null-terminated-result)
-
-    // Calculate SHA1 digest
-    mbedtls_sha1((unsigned char*)concatenated, nonce_len + created_len + password_len, digest);
-
-    // Base64 encode the digest
-    base64_digest = malloc(((4 * 20) / 3) + 5); // 20 is SHA1 digest length
-    mbedtls_base64_encode((unsigned char*)base64_digest, ((4 * 20) / 3) + 5, &base64_len, digest, 20);
-    base64_digest[base64_len] = '\0'; // Ensure null termination
-    
-    // Create the security header in the format expected by onvif_simple_server
-    header = malloc(1024);
-    sprintf(header,
-        "<wsse:Security s:mustUnderstand=\"1\" "
-            "xmlns:wsse=\"http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd\" "
-            "xmlns:wsu=\"http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd\">"
-            "<wsse:UsernameToken wsu:Id=\"UsernameToken-1\">"
-                "<wsse:Username>%s</wsse:Username>"
-                "<wsse:Password Type=\"http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-username-token-profile-1.0#PasswordDigest\">%s</wsse:Password>"
-                "<wsse:Nonce EncodingType=\"http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-soap-message-security-1.0#Base64Binary\">%s</wsse:Nonce>"
-                "<wsu:Created>%s</wsu:Created>"
-            "</wsse:UsernameToken>"
-        "</wsse:Security>",
-        username, base64_digest, base64_nonce, created);
-    
-    // Free allocated memory
-    free(concatenated);
-    free(base64_nonce);
-    free(base64_digest);
-    
-    return header;
-}
-
 // Send a SOAP request to the ONVIF device
 static char* send_soap_request(const char *device_url, const char *soap_action, const char *request_body,
                               const char *username, const char *password) {
@@ -130,8 +47,6 @@ static char* send_soap_request(const char *device_url, const char *soap_action, 
     struct curl_slist *headers = NULL;
     char *soap_envelope = NULL;
     char *response = NULL;
-    char nonce[64] = {0};
-    char created[64] = {0};
     char *security_header = NULL;
     
     // Initialize memory chunk
@@ -151,7 +66,7 @@ static char* send_soap_request(const char *device_url, const char *soap_action, 
     
     // Create security header if authentication is required
     if (username && password && strlen(username) > 0 && strlen(password) > 0) {
-        security_header = create_security_header(username, password, nonce, created);
+        security_header = onvif_create_security_header(username, password);
         log_info("Using authentication with username: %s", username);
     } else {
         security_header = strdup("");

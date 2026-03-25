@@ -9,10 +9,6 @@
 #include <cjson/cJSON.h>
 #include <pthread.h>
 #include <time.h>
-#include <mbedtls/sha1.h>
-#include <mbedtls/base64.h>
-#include <mbedtls/entropy.h>
-#include <mbedtls/ctr_drbg.h>
 
 #include "core/logger.h"
 #include "core/config.h"
@@ -20,6 +16,7 @@
 #include "core/shutdown_coordinator.h"
 #include "core/mqtt_client.h"
 #include "video/onvif_detection.h"
+#include "video/onvif_soap.h"
 #include "video/detection_result.h"
 #include "video/onvif_motion_recording.h"
 #include "video/zone_filter.h"
@@ -72,169 +69,41 @@ static size_t write_memory_callback(void *contents, size_t size, size_t nmemb, v
     return realsize;
 }
 
-// Base64 encoding function using mbedTLS
-static char *base64_encode(const unsigned char *input, size_t length) {
-    size_t output_len = 0;
-    
-    // Calculate required output buffer size
-    mbedtls_base64_encode(NULL, 0, &output_len, input, length);
-    
-    // Allocate output buffer (add 1 for null terminator)
-    char *output = (char *)malloc(output_len + 1);
-    if (!output) {
-        return NULL;
-    }
-    
-    // Perform the actual encoding
-    int ret = mbedtls_base64_encode((unsigned char *)output, output_len, &output_len, input, length);
-    if (ret != 0) {
-        free(output);
-        return NULL;
-    }
-    
-    // Add null terminator
-    output[output_len] = '\0';
-    
-    return output;
-}
-
 // Create ONVIF SOAP request with WS-Security (if credentials provided)
 static char *create_onvif_request(const char *username, const char *password, const char *request_body) {
-    char *soap_request = (char *)malloc(4096);
-    if (!soap_request) {
-        return NULL;
-    }
-
-    // Check if credentials are provided (non-empty strings)
     bool has_credentials = (username && strlen(username) > 0 && password && strlen(password) > 0);
+    char *security_header = NULL;
 
     if (!has_credentials) {
-        // Create SOAP request without WS-Security headers for cameras without authentication
         log_info("Creating ONVIF request without authentication (no credentials provided)");
-        snprintf(soap_request, 4096,
-            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
-            "<s:Envelope xmlns:s=\"http://www.w3.org/2003/05/soap-envelope\">\n"
-            "  <s:Header/>\n"
-            "  <s:Body xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\">\n"
-            "    %s\n"
-            "  </s:Body>\n"
-            "</s:Envelope>",
-            request_body);
-        return soap_request;
+        security_header = strdup("");
+    } else {
+        log_info("Creating ONVIF request with WS-Security authentication");
+        security_header = onvif_create_security_header(username, password);
+        if (!security_header) {
+            log_error("Failed to create WS-Security header");
+            return NULL;
+        }
     }
 
-    // Create SOAP request with WS-Security headers for authenticated cameras
-    log_info("Creating ONVIF request with WS-Security authentication");
-
-    // Initialize mbedTLS RNG
-    mbedtls_entropy_context entropy;
-    mbedtls_ctr_drbg_context ctr_drbg;
-    const char *pers = "onvif_detection";
-
-    mbedtls_entropy_init(&entropy);
-    mbedtls_ctr_drbg_init(&ctr_drbg);
-
-    if (mbedtls_ctr_drbg_seed(&ctr_drbg, mbedtls_entropy_func, &entropy,
-                             (const unsigned char *)pers, strlen(pers)) != 0) {
-        mbedtls_entropy_free(&entropy);
-        free(soap_request);
+    // Allocate envelope dynamically to accommodate variable-length body and header
+    size_t envelope_size = strlen(request_body) + strlen(security_header) + 1024;
+    char *soap_request = malloc(envelope_size);
+    if (!soap_request) {
+        free(security_header);
         return NULL;
     }
 
-    // Generate nonce (random bytes)
-    unsigned char nonce_raw[16];
-    if (mbedtls_ctr_drbg_random(&ctr_drbg, nonce_raw, sizeof(nonce_raw)) != 0) {
-        mbedtls_ctr_drbg_free(&ctr_drbg);
-        mbedtls_entropy_free(&entropy);
-        free(soap_request);
-        return NULL;
-    }
-
-    char *nonce = base64_encode(nonce_raw, sizeof(nonce_raw));
-    if (!nonce) {
-        mbedtls_ctr_drbg_free(&ctr_drbg);
-        mbedtls_entropy_free(&entropy);
-        free(soap_request);
-        return NULL;
-    }
-
-    // Create timestamp in ISO 8601 format
-    char created[32];
-    time_t now;
-    struct tm tm_info_buf;
-    const struct tm *tm_info;
-    time(&now);
-    tm_info = gmtime_r(&now, &tm_info_buf);
-    strftime(created, sizeof(created), "%Y-%m-%dT%H:%M:%S.000Z", tm_info);
-
-    // Create the raw digest string (nonce + created + password)
-    unsigned char digest_raw[512];
-    size_t digest_len = 0;
-
-    // Copy nonce raw bytes
-    memcpy(digest_raw, nonce_raw, sizeof(nonce_raw));
-    digest_len += sizeof(nonce_raw);
-
-    // Copy created timestamp (raw bytes for SHA-1 input, not a C string).
-    // Pre-compute length to avoid the bugprone-not-null-terminated-result pattern
-    // of passing strlen() directly as the memcpy size argument.
-    size_t created_len = strlen(created);
-    memcpy((void *)(digest_raw + digest_len), created, created_len); // NOLINT(bugprone-not-null-terminated-result)
-    digest_len += created_len;
-
-    // Copy password (raw bytes for SHA-1 input, not a C string)
-    size_t password_len = strlen(password);
-    memcpy((void *)(digest_raw + digest_len), password, password_len); // NOLINT(bugprone-not-null-terminated-result)
-    digest_len += password_len;
-
-    // Generate SHA-1 hash
-    unsigned char hash[20]; // SHA-1 produces 20 bytes
-    mbedtls_sha1_context sha1_ctx;
-
-    mbedtls_sha1_init(&sha1_ctx);
-    mbedtls_sha1_starts(&sha1_ctx);
-    mbedtls_sha1_update(&sha1_ctx, digest_raw, digest_len);
-    mbedtls_sha1_finish(&sha1_ctx, hash);
-    mbedtls_sha1_free(&sha1_ctx);
-
-    // Encode hash as base64
-    char *digest = base64_encode(hash, 20); // SHA-1 hash is 20 bytes
-    if (!digest) {
-        mbedtls_ctr_drbg_free(&ctr_drbg);
-        mbedtls_entropy_free(&entropy);
-        free(nonce);
-        free(soap_request);
-        return NULL;
-    }
-
-    // Clean up mbedTLS contexts
-    mbedtls_ctr_drbg_free(&ctr_drbg);
-    mbedtls_entropy_free(&entropy);
-
-    // Create the SOAP request with security headers
-    snprintf(soap_request, 4096,
-        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
-        "<s:Envelope xmlns:s=\"http://www.w3.org/2003/05/soap-envelope\" "
-        "xmlns:wsse=\"http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd\" "
-        "xmlns:wsu=\"http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd\">\n"
-        "  <s:Header>\n"
-        "    <wsse:Security s:mustUnderstand=\"1\">\n"
-        "      <wsse:UsernameToken wsu:Id=\"UsernameToken-1\">\n"
-        "        <wsse:Username>%s</wsse:Username>\n"
-        "        <wsse:Password Type=\"http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-username-token-profile-1.0#PasswordDigest\">%s</wsse:Password>\n"
-        "        <wsse:Nonce EncodingType=\"http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-soap-message-security-1.0#Base64Binary\">%s</wsse:Nonce>\n"
-        "        <wsu:Created>%s</wsu:Created>\n"
-        "      </wsse:UsernameToken>\n"
-        "    </wsse:Security>\n"
-        "  </s:Header>\n"
-        "  <s:Body xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\">\n"
-        "    %s\n"
-        "  </s:Body>\n"
+    snprintf(soap_request, envelope_size,
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
+        "<s:Envelope xmlns:s=\"http://www.w3.org/2003/05/soap-envelope\">"
+        "<s:Header>%s</s:Header>"
+        "<s:Body xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" "
+        "xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\">%s</s:Body>"
         "</s:Envelope>",
-        username, digest, nonce, created, request_body);
+        security_header, request_body);
 
-    free(nonce);
-    free(digest);
+    free(security_header);
     return soap_request;
 }
 

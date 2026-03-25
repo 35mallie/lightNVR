@@ -1,15 +1,12 @@
 #include "video/onvif_ptz.h"
+#include "video/onvif_soap.h"
 #include "core/logger.h"
 #include "core/url_utils.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
-#include <sys/random.h>
 #include <curl/curl.h>
 #include "ezxml.h"
-#include <mbedtls/sha1.h>
-#include <mbedtls/base64.h>
 
 // Structure to store memory for CURL responses
 typedef struct {
@@ -36,73 +33,6 @@ static size_t write_callback(void *contents, size_t size, size_t nmemb, void *us
     return realsize;
 }
 
-// Create WS-Security header with digest authentication
-static char* create_security_header(const char *username, const char *password, char *nonce, char *created) {
-    char *header = NULL;
-    unsigned char digest[20];
-    char *concatenated = NULL;
-    char *base64_nonce = NULL;
-    char *base64_digest = NULL;
-    int nonce_len = 16;
-    size_t base64_len;
-    
-    unsigned char nonce_bytes[nonce_len];
-    if (getrandom(nonce_bytes, nonce_len, 0) < 0) {
-        FILE *urandom = fopen("/dev/urandom", "rb");
-        if (urandom) {
-            (void)fread(nonce_bytes, 1, nonce_len, urandom);
-            fclose(urandom);
-        }
-    }
-    
-    base64_nonce = malloc(((4 * nonce_len) / 3) + 5);
-    mbedtls_base64_encode((unsigned char*)base64_nonce, ((4 * nonce_len) / 3) + 5, &base64_len, nonce_bytes, nonce_len);
-    base64_nonce[base64_len] = '\0';
-    snprintf(nonce, 64, "%s", base64_nonce);
-    
-    time_t now;
-    struct tm tm_now_buf;
-    const struct tm *tm_now;
-    time(&now);
-    tm_now = gmtime_r(&now, &tm_now_buf);
-    strftime(created, 30, "%Y-%m-%dT%H:%M:%S.000Z", tm_now);
-    
-    // Pre-compute lengths to avoid the bugprone-not-null-terminated-result lint pattern.
-    size_t created_len = strlen(created);
-    size_t password_len = strlen(password);
-    concatenated = malloc(nonce_len + created_len + password_len + 1);
-    memcpy(concatenated, nonce_bytes, nonce_len);
-    // Raw byte copies for SHA-1 input: intermediate parts are not C strings
-    memcpy((void *)(concatenated + nonce_len), created, created_len); // NOLINT(bugprone-not-null-terminated-result)
-    memcpy((void *)(concatenated + nonce_len + created_len), password, password_len + 1);
-
-    mbedtls_sha1((unsigned char*)concatenated, nonce_len + created_len + password_len, digest);
-
-    base64_digest = malloc(((4 * 20) / 3) + 5);
-    mbedtls_base64_encode((unsigned char*)base64_digest, ((4 * 20) / 3) + 5, &base64_len, digest, 20);
-    base64_digest[base64_len] = '\0';
-    
-    header = malloc(1024);
-    sprintf(header,
-        "<wsse:Security s:mustUnderstand=\"1\" "
-            "xmlns:wsse=\"http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd\" "
-            "xmlns:wsu=\"http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd\">"
-            "<wsse:UsernameToken wsu:Id=\"UsernameToken-1\">"
-                "<wsse:Username>%s</wsse:Username>"
-                "<wsse:Password Type=\"http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-username-token-profile-1.0#PasswordDigest\">%s</wsse:Password>"
-                "<wsse:Nonce EncodingType=\"http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-soap-message-security-1.0#Base64Binary\">%s</wsse:Nonce>"
-                "<wsu:Created>%s</wsu:Created>"
-            "</wsse:UsernameToken>"
-        "</wsse:Security>",
-        username, base64_digest, base64_nonce, created);
-    
-    free(concatenated);
-    free(base64_nonce);
-    free(base64_digest);
-    
-    return header;
-}
-
 // Send a SOAP request to the ONVIF PTZ service
 static char* send_ptz_soap_request(const char *ptz_url, const char *soap_action, const char *request_body,
                                    const char *username, const char *password) {
@@ -112,8 +42,6 @@ static char* send_ptz_soap_request(const char *ptz_url, const char *soap_action,
     struct curl_slist *headers = NULL;
     char *soap_envelope = NULL;
     char *response = NULL;
-    char nonce[64] = {0};
-    char created[64] = {0};
     char *security_header = NULL;
     
     chunk.memory = malloc(1);
@@ -127,7 +55,7 @@ static char* send_ptz_soap_request(const char *ptz_url, const char *soap_action,
     }
     
     if (username && password && strlen(username) > 0 && strlen(password) > 0) {
-        security_header = create_security_header(username, password, nonce, created);
+        security_header = onvif_create_security_header(username, password);
     } else {
         security_header = strdup("");
     }
