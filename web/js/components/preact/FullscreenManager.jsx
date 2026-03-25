@@ -7,17 +7,98 @@ import { tinykeys } from 'tinykeys';
 
 
 /**
+ * Show a brief grid-position overlay inside the newly-fullscreen cell so the
+ * user can orient themselves after arrow-key navigation.
+ *
+ * The overlay is injected directly into the DOM (not via React/Preact) so it
+ * works inside the native fullscreen element without needing a portal.
+ *
+ * @param {HTMLElement} nextCell       - The .video-cell element now in fullscreen
+ * @param {string}      nextStreamName - The stream that is now visible
+ * @param {Array}       streamsToShow  - All streams on the current page
+ * @param {number}      cols           - Grid column count
+ * @param {number}      rows           - Grid row count
+ */
+function showGridOverlay(nextCell, nextStreamName, streamsToShow, cols, rows) {
+  // Remove any stale overlay left from rapid navigation.
+  const existing = nextCell.querySelector('.fs-grid-overlay');
+  if (existing) existing.remove();
+
+  const overlay = document.createElement('div');
+  overlay.className = 'fs-grid-overlay';
+  Object.assign(overlay.style, {
+    position: 'absolute',
+    bottom: '20px', left: '20px', top: 'auto', right: 'auto',
+    background: 'rgba(0,0,0,0.65)',
+    padding: '8px',
+    borderRadius: '8px',
+    zIndex: '9999',
+    display: 'grid',
+    gridTemplateColumns: `repeat(${cols}, 1fr)`,
+    gap: '4px',
+    width: 'min(180px, 22vw)',
+    backdropFilter: 'blur(4px)',
+    pointerEvents: 'auto',
+    boxSizing: 'border-box',
+  });
+
+  // Build the mini grid.
+  for (let row = 0; row < rows; row++) {
+    for (let col = 0; col < cols; col++) {
+      const idx = row * cols + col;
+      const stream = streamsToShow[idx];
+      const isCurrent = stream && stream.name === nextStreamName;
+      const cell = document.createElement('div');
+      Object.assign(cell.style, {
+        aspectRatio: '16/9',
+        background: !stream
+          ? 'rgba(255,255,255,0.05)'
+          : isCurrent
+            ? 'rgba(255,255,255,0.65)'
+            : 'rgba(255,255,255,0.18)',
+        border: `1px solid ${isCurrent ? 'rgba(255,255,255,0.9)' : 'rgba(255,255,255,0.25)'}`,
+        borderRadius: '2px',
+        boxSizing: 'border-box',
+      });
+      overlay.appendChild(cell);
+    }
+  }
+
+  // Cycle through four corners when the user hovers to keep it out of the way.
+  const CORNERS = [
+    { bottom: '20px', left:  '20px', top:  'auto', right: 'auto' }, // bottom-left (default)
+    { bottom: 'auto', left:  'auto', top:  '20px', right: '20px' }, // top-right
+    { bottom: '20px', left:  'auto', top:  'auto', right: '20px' }, // bottom-right
+    { bottom: 'auto', left:  '20px', top:  '20px', right: 'auto' }, // top-left
+  ];
+  let cornerIdx = 0;
+  overlay.addEventListener('mouseenter', () => {
+    cornerIdx = (cornerIdx + 1) % CORNERS.length;
+    Object.assign(overlay.style, CORNERS[cornerIdx]);
+  });
+
+  nextCell.appendChild(overlay);
+
+  // Auto-remove after 3 s; also clean up when fullscreen changes (nav or exit).
+  const hideTimer = setTimeout(() => overlay.remove(), 3000);
+  document.addEventListener('fullscreenchange', () => {
+    clearTimeout(hideTimer);
+    overlay.remove();
+  }, { once: true });
+}
+
+/**
  * Navigate to an adjacent stream in the native fullscreen grid.
  * Finds the currently fullscreen .video-cell, locates its grid position, then
  * steps in the requested direction (with wrap-around), skipping empty cells.
  *
  * IMPORTANT: The browser Fullscreen API is a *stack* — every requestFullscreen()
- * call pushes a new entry, and exitFullscreen() only pops the top.  If we simply
- * called nextCell.requestFullscreen() we would build up a stack [A, B, C, D],
- * forcing the user to "unwind" every visited stream before returning to the grid.
- * To avoid that, we always exitFullscreen() first (draining the stack to empty),
- * wait for the fullscreenchange event, then requestFullscreen() on the next cell.
- * A guard flag prevents overlapping transitions from rapid key presses.
+ * call pushes a new entry, and exitFullscreen() only pops the top.  To avoid
+ * building up a stack [A, B, C, D] that forces the user to "unwind" every
+ * visited stream, we drain the stack recursively: keep calling exitFullscreen()
+ * on each fullscreenchange until document.fullscreenElement is null, then
+ * requestFullscreen() on the next cell.  A guard flag prevents overlapping
+ * transitions from rapid key presses.
  *
  * @param {'ArrowLeft'|'ArrowRight'|'ArrowUp'|'ArrowDown'} direction
  * @param {Array}  streamsToShow - streams visible in the current page
@@ -48,6 +129,7 @@ function navigateFullscreenGrid(direction, streamsToShow, cols, rows) {
   // we land on a populated cell (or exhaust all possibilities).
   const maxAttempts = cols * rows;
   let nextCell = null;
+  let nextStreamName = null;
   for (let i = 0; i < maxAttempts; i++) {
     if (direction === 'ArrowRight') {
       nextCol = (nextCol + 1) % cols;
@@ -69,6 +151,7 @@ function navigateFullscreenGrid(direction, streamsToShow, cols, rows) {
       );
       if (candidate && candidate !== fullscreenEl) {
         nextCell = candidate;
+        nextStreamName = nextStream.name;
       }
       break;
     }
@@ -76,25 +159,30 @@ function navigateFullscreenGrid(direction, streamsToShow, cols, rows) {
 
   if (!nextCell) return;
 
-  // Exit fullscreen first to flush the stack, then re-enter for the next cell.
   _fsNavBusy = true;
 
-  const onChanged = () => {
-    document.removeEventListener('fullscreenchange', onChanged);
+  // Recursively drain the fullscreen stack until it is completely empty, then
+  // enter fullscreen for the next cell.  This prevents the "reverse-order exit"
+  // bug caused by browsers that implement exitFullscreen() as a single-pop.
+  const drainAndEnter = () => {
     if (!document.fullscreenElement) {
-      // Stack is now empty — enter fullscreen for the next cell.
+      // Stack is fully empty — enter fullscreen for the next cell.
       nextCell.requestFullscreen()
+        .then(() => showGridOverlay(nextCell, nextStreamName, streamsToShow, cols, rows))
         .catch(err => console.warn(`Grid nav fullscreen switch failed: ${err.message}`))
         .finally(() => { _fsNavBusy = false; });
     } else {
-      // Something else grabbed fullscreen unexpectedly; just release the guard.
-      _fsNavBusy = false;
+      // Stack still has entries — keep draining.
+      document.addEventListener('fullscreenchange', drainAndEnter, { once: true });
+      document.exitFullscreen().catch(err => {
+        console.warn(`Grid nav fullscreen drain failed: ${err.message}`);
+        _fsNavBusy = false;
+      });
     }
   };
 
-  document.addEventListener('fullscreenchange', onChanged);
+  document.addEventListener('fullscreenchange', drainAndEnter, { once: true });
   document.exitFullscreen().catch(err => {
-    document.removeEventListener('fullscreenchange', onChanged);
     console.warn(`Grid nav fullscreen exit failed: ${err.message}`);
     _fsNavBusy = false;
   });
