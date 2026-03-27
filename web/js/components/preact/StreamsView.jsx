@@ -272,7 +272,10 @@ export function StreamsView() {
     recordOnSchedule: false,
     recordingSchedule: Array(168).fill(true),
     // Tags
-    tags: ''
+    tags: '',
+    // Cross-stream motion trigger: name of another stream whose ONVIF motion
+    // events trigger recording on this stream (e.g., PTZ slaved to fixed wide lens)
+    motionTriggerSource: ''
   });
   const [isEditing, setIsEditing] = useState(false);
   const [isCloning, setIsCloning] = useState(false);
@@ -609,7 +612,9 @@ export function StreamsView() {
         currentStream.recordOnSchedule
       ),
       // Tags
-      tags: currentStream.tags || ''
+      tags: currentStream.tags || '',
+      // Cross-stream motion trigger source
+      motion_trigger_source: currentStream.motionTriggerSource || ''
     };
 
     // When editing, set is_deleted to false to allow undeleting soft-deleted streams
@@ -859,7 +864,9 @@ export function StreamsView() {
           ? stream.recording_schedule
           : Array(168).fill(true),
         // Tags
-        tags: stream.tags || ''
+        tags: stream.tags || '',
+        // Cross-stream motion trigger source
+        motionTriggerSource: stream.motion_trigger_source || ''
       });
       setIsEditing(true);
       setModalVisible(true);
@@ -936,7 +943,9 @@ export function StreamsView() {
         recordingSchedule: (Array.isArray(stream.recording_schedule) && stream.recording_schedule.length === 168)
           ? stream.recording_schedule
           : Array(168).fill(true),
-        tags: stream.tags || ''
+        tags: stream.tags || '',
+        // Cross-stream motion trigger source
+        motionTriggerSource: stream.motion_trigger_source || ''
       });
       setIsEditing(false);
       setIsCloning(true);

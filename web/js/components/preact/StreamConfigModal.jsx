@@ -1472,6 +1472,22 @@ export function StreamConfigModal({
                   />
                   <p className="mt-1 text-xs text-muted-foreground">{t('streamsConfig.segmentDurationHelp')}</p>
                 </div>
+
+                <div className="md:col-span-2">
+                  <label htmlFor="motion-trigger-source" className="block text-sm font-medium mb-2">
+                    {t('streamsConfig.motionTriggerSource')}
+                  </label>
+                  <input
+                    type="text"
+                    id="motion-trigger-source"
+                    name="motionTriggerSource"
+                    className="w-full px-3 py-2 border border-input rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-primary bg-background text-foreground"
+                    placeholder={t('streamsConfig.motionTriggerSourcePlaceholder')}
+                    value={currentStream.motionTriggerSource || ''}
+                    onChange={onInputChange}
+                  />
+                  <p className="mt-1 text-xs text-muted-foreground">{t('streamsConfig.motionTriggerSourceHelp')}</p>
+                </div>
               </div>
             </AccordionSection>
 
